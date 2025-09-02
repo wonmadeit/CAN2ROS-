@@ -16,7 +16,7 @@ SIGNAL_MAP = {
     (0x321, "BrakePressed"): {"topic": "/can/brake_pressed", "type": "bool"},
 }
 
-DBC_PATH = "/path/to/your_file.dbc"  # 실제 DBC 파일 경로를 지정하세요
+DBC_PATH = "C_CAN.dbc"  # DBC 파일 경로
 
 MSG_TYPE_MAP = {
     "float": Float32,
@@ -58,7 +58,7 @@ class CanDBCNode(Node):
             # CAN 인터페이스 비트레이트 설정 (50 kbps)
             subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True)
             subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "50000", "restart-ms", "100"], check=True)
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "txqueuelen", "1024"], check=True)
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "txqueuelen", "1024"], check=True)    # 이건 안해도?
             subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)
             self.get_logger().info("can0 interface configured successfully.")
         except subprocess.CalledProcessError as e:
