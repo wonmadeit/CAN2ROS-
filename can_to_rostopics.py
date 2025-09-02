@@ -1,9 +1,9 @@
 import rospy
 import can  # python-can
-import cantools  # DBC 파서
+import cantools  # DBC parser
 from std_msgs.msg import Int32
 from threading import Thread
-import subprocess  # subprocess 모듈 추가
+import subprocess 
 
 # ---- 사용자 설정: 원하는 신호명 입력 ----
 SIGNAL_MAP = {
@@ -11,6 +11,7 @@ SIGNAL_MAP = {
     "LONG_ACCEL": {"topic": "/accel", "type": "int"},
 }
 
+# ---- 사용할 dbc파일명 입력 ----
 DBC_PATH = "hyundai_2015_ccan.dbc"  # DBC 파일 경로
 
 class CanDBCNode:
