@@ -1,14 +1,15 @@
 import rospy
 import can  # python-can
 import cantools  # DBC 파서
-from std_msgs.msg import String  # String 메시지 사용
+from sensor_msgs.msg import NavSatFix  # NavSatFix 메시지 사용
 from threading import Thread
 import subprocess  # subprocess 모듈 추가
 
 # ---- 사용자 설정: ESP12 신호만 신호 -> 토픽 매핑 ----
 SIGNAL_MAP = {
-    "SAS_Angle": {"topic": "/combined_topic", "type": "int"},
-    "LONG_ACCEL": {"topic": "/combined_topic", "type": "int"},
+    "Latitude": {"topic": "/gps/latitude", "type": "float"},
+    "Longitude": {"topic": "/gps/longitude", "type": "float"},
+    # "Altitude": {"topic": "/gps/altitude", "type": "float"},
 }
 
 DBC_PATH = "hyundai_2015_ccan.dbc"  # DBC 파일 경로
@@ -16,7 +17,7 @@ DBC_PATH = "hyundai_2015_ccan.dbc"  # DBC 파일 경로
 class CanDBCNode:
     def __init__(self):
         # ROS1 노드 초기화
-        rospy.init_node('can_dbc_to_combined_topic')
+        rospy.init_node('can_dbc_to_gps_topics')
 
         # CAN 인터페이스 활성화
         self.configure_can_interface()
@@ -25,7 +26,9 @@ class CanDBCNode:
         self.db = cantools.database.load_file(DBC_PATH)
 
         # 퍼블리셔 딕셔너리 초기화
-        self.publisher = rospy.Publisher("/combined_topic", String, queue_size=10)
+        self.publisher_lat = rospy.Publisher("/gps/latitude", NavSatFix, queue_size=10)
+        self.publisher_lon = rospy.Publisher("/gps/longitude", NavSatFix, queue_size=10)
+        self.publisher_alt = rospy.Publisher("/gps/altitude", NavSatFix, queue_size=10)
 
         # DBC 파일 내 신호 처리
         self._publishers = {}
@@ -78,18 +81,27 @@ class CanDBCNode:
                 rospy.logwarn(f"Decode fail ID=0x{msg.arbitration_id:X}: {e}")
                 continue
 
-            # 두 신호를 하나의 문자열로 묶어서 퍼블리시
-            signal_data = {}
+            # GPS 관련 신호 처리 (위도, 경도, 고도)
+            gps_data = {}
             for signal_name in SIGNAL_MAP.keys():
                 if signal_name in decoded:
                     val = decoded[signal_name]
-                    signal_data[signal_name] = int(val)
+                    gps_data[signal_name] = float(val)
 
-            if signal_data:
-                # 딕셔너리 형태로 데이터를 문자열로 변환
-                pub_msg = String()
-                pub_msg.data = ", ".join([f"{key}: {value}" for key, value in signal_data.items()])
-                self.publisher.publish(pub_msg)
+            if gps_data:
+                # 각 신호에 대해 NavSatFix 메시지 발행
+                nav_msg = NavSatFix()
+                nav_msg.header.stamp = rospy.Time.now()  # 현재 시간으로 타임스탬프 설정
+
+                if "LATITUDE" in gps_data:
+                    nav_msg.latitude = gps_data["LATITUDE"]
+                    self.publisher_lat.publish(nav_msg)
+                if "LONGITUDE" in gps_data:
+                    nav_msg.longitude = gps_data["LONGITUDE"]
+                    self.publisher_lon.publish(nav_msg)
+                if "ALTITUDE" in gps_data:
+                    nav_msg.altitude = gps_data["ALTITUDE"]
+                    self.publisher_alt.publish(nav_msg)
 
     def destroy_node(self):
         self.running = False
