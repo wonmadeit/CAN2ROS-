@@ -5,7 +5,7 @@ from sensor_msgs.msg import NavSatFix  # NavSatFix 메시지 사용
 from threading import Thread
 import subprocess  # subprocess 모듈 추가
 
-# ---- 사용자 설정: ESP12 신호만 신호 -> 토픽 매핑 ----
+# ---dbc 참조하여 topic에 넣을 신호명 추가----
 SIGNAL_MAP = {
     "Latitude": {"topic": "/gps/latitude", "type": "float"},
     "Longitude": {"topic": "/gps/longitude", "type": "float"},
@@ -16,16 +16,14 @@ DBC_PATH = "hyundai_2015_ccan.dbc"  # DBC 파일 경로
 
 class CanDBCNode:
     def __init__(self):
-        # ROS1 노드 초기화
-        rospy.init_node('can_dbc_to_gps_topics')
 
-        # CAN 인터페이스 활성화
+        rospy.init_node('can_to_topics')
+        
         self.configure_can_interface()
 
-        # DBC 파일 로드
         self.db = cantools.database.load_file(DBC_PATH)
 
-        # 퍼블리셔 딕셔너리 초기화
+        # 퍼블리셔 초기화 (딕셔너리 형태로)
         self.publisher_lat = rospy.Publisher("/gps/latitude", NavSatFix, queue_size=10)
         self.publisher_lon = rospy.Publisher("/gps/longitude", NavSatFix, queue_size=10)
         self.publisher_alt = rospy.Publisher("/gps/altitude", NavSatFix, queue_size=10)
@@ -33,7 +31,7 @@ class CanDBCNode:
         # DBC 파일 내 신호 처리
         self._publishers = {}
 
-        # CAN 버스 오픈 (SocketCAN)
+        # CAN 버스 오픈 (SocketCAN). 사용하는 버스에 따라 can channel 바꿔주기
         self.bus = can.interface.Bus(channel='can0', bustype='socketcan')
 
         # 수신 스레드
@@ -41,16 +39,14 @@ class CanDBCNode:
         self.rx_thread = Thread(target=self.rx_loop, daemon=True)
         self.rx_thread.start()
 
+    # can 인터페이스 설정 자동 실행 함수
     def configure_can_interface(self):
-        """
-        CAN 인터페이스를 자동으로 설정하는 함수
-        """
         try:
             rospy.loginfo("Configuring can0 interface with 500000 bitrate...")
-            # CAN 인터페이스 비트레이트 설정 (500kbps 예시)
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True)  # can0 인터페이스 다운
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "500000", "restart-ms", "100"], check=True)  # 비트레이트 설정
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)  # can0 인터페이스 업
+            # CAN 인터페이스 비트레이트 설정. 사용할 can 버스의 설정값에 맞게 입력
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True) 
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "500000", "restart-ms", "100"], check=True)  # 비트레이트 설정. 보통 C&Pcan쪽은 500000
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)  
             rospy.loginfo("can0 interface configured successfully.")
         except subprocess.CalledProcessError as e:
             rospy.logerr(f"Error in configuring can0: {e}")
@@ -91,7 +87,7 @@ class CanDBCNode:
             if gps_data:
                 # 각 신호에 대해 NavSatFix 메시지 발행
                 nav_msg = NavSatFix()
-                nav_msg.header.stamp = rospy.Time.now()  # 현재 시간으로 타임스탬프 설정
+                nav_msg.header.stamp = rospy.Time.now()  # 현재 시간으로 타임스탬프 설정(유닉스타임)
 
                 if "LATITUDE" in gps_data:
                     nav_msg.latitude = gps_data["LATITUDE"]
