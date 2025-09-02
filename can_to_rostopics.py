@@ -5,7 +5,7 @@ from std_msgs.msg import Int32
 from threading import Thread
 import subprocess  # subprocess 모듈 추가
 
-# ---- 사용자 설정: ESP12 신호만 신호 -> 토픽 매핑 ----
+# ---- 사용자 설정: 원하는 신호명 입력 ----
 SIGNAL_MAP = {
     "SAS_Angle": {"topic": "/angle", "type": "int"},
     "LONG_ACCEL": {"topic": "/accel", "type": "int"},
