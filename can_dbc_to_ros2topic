@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+import can  # python-can
+import cantools  # DBC 파서
+from std_msgs.msg import Float32, Int32, Bool
+import subprocess
+from threading import Thread
+
+# ---- 사용자 설정: 신호 -> 토픽 매핑 ----
+#   - key: (CAN_ID, "SignalName")  (CAN_ID는 16진수 형식)
+#   - value: {"topic": "...", "type": "float|int|bool"}
+SIGNAL_MAP = {
+    (0x5C4, "CabinTemp"): {"topic": "/can/cabin_temp", "type": "int"},
+    (0x123, "VehicleSpeed"): {"topic": "/can/vehicle_speed", "type": "float"},
+    (0x321, "BrakePressed"): {"topic": "/can/brake_pressed", "type": "bool"},
+}
+
+DBC_PATH = "/path/to/your_file.dbc"  # 실제 DBC 파일 경로를 지정하세요
+
+MSG_TYPE_MAP = {
+    "float": Float32,
+    "int": Int32,
+    "bool": Bool,
+}
+
+class CanDBCNode(Node):
+    def __init__(self):
+        super().__init__("can_dbc_to_topics")
+        
+        # 1. CAN 인터페이스 설정 (SocketCAN 자동화)
+        self.configure_can_interface()
+
+        # 2. DBC 파일 로드
+        self.db = cantools.database.load_file(DBC_PATH)
+
+        # 3. 퍼블리셔 생성 (신호별로)
+        self.publishers = {}
+        for key, cfg in SIGNAL_MAP.items():
+            msg_type = MSG_TYPE_MAP[cfg["type"]]
+            self.publishers[key] = self.create_publisher(msg_type, cfg["topic"], 10)
+            self.get_logger().info(f"Publishing {key} -> {cfg['topic']} ({cfg['type']})")
+
+        # 4. CAN 버스 오픈 (SocketCAN)
+        self.bus = can.interface.Bus(channel='can0', bustype='socketcan')
+
+        # 5. 수신 스레드
+        self.running = True
+        self.rx_thread = Thread(target=self.rx_loop, daemon=True)
+        self.rx_thread.start()
+
+    def configure_can_interface(self):
+        """
+        CAN 인터페이스를 자동으로 설정하는 함수
+        """
+        try:
+            self.get_logger().info("Configuring can0 interface with 50000 bitrate...")
+            # CAN 인터페이스 비트레이트 설정 (50 kbps)
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True)
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "50000", "restart-ms", "100"], check=True)
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "txqueuelen", "1024"], check=True)
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)
+            self.get_logger().info("can0 interface configured successfully.")
+        except subprocess.CalledProcessError as e:
+            self.get_logger().error(f"Error in configuring can0: {e}")
+            exit(1)
+
+    def rx_loop(self):
+        # 메시지 ID -> DBC 메시지 객체 캐시
+        dbc_msg_cache = {}
+        while self.running and rclpy.ok():
+            msg = self.bus.recv(timeout=1.0)  # blocking
+            if msg is None:
+                continue
+
+            can_id = msg.arbitration_id
+            data = bytes(msg.data)
+
+            # 해당 ID 디코딩 가능한 DBC 메시지 찾기
+            if can_id not in dbc_msg_cache:
+                m = None
+                for m_candidate in self.db.messages:
+                    if m_candidate.frame_id == can_id:
+                        m = m_candidate
+                        break
+                dbc_msg_cache[can_id] = m
+
+            dbc_msg = dbc_msg_cache[can_id]
+            if dbc_msg is None:
+                continue  # DBC에 없는 ID면 패스
+
+            try:
+                decoded = dbc_msg.decode(data, decode_choices=True)
+            except Exception as e:
+                self.get_logger().warn(f"Decode fail ID=0x{can_id:X}: {e}")
+                continue
+
+            # 우리가 원하는 신호만 골라 퍼블리시
+            for (wanted_id, signal_name), cfg in SIGNAL_MAP.items():
+                if wanted_id != can_id:
+                    continue
+                if signal_name not in decoded:
+                    continue
+                val = decoded[signal_name]
+                # 타입 캐스팅
+                msg_type = cfg["type"]
+                if msg_type == "float":
+                    pub_msg = Float32()
+                    pub_msg.data = float(val)
+                elif msg_type == "int":
+                    pub_msg = Int32()
+                    pub_msg.data = int(val)
+                elif msg_type == "bool":
+                    pub_msg = Bool()
+                    # 수치/문자라도 truthy면 True 처리
+                    pub_msg.data = bool(val)
+                else:
+                    continue
+                self.publishers[(wanted_id, signal_name)].publish(pub_msg)
+
+    def destroy_node(self):
+        self.running = False
+        super().destroy_node()
+
+def main():
+    rclpy.init()
+    node = CanDBCNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
