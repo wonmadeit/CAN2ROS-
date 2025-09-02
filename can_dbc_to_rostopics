@@ -1,49 +1,47 @@
-#!/usr/bin/env python
 import rospy
 import can  # python-can
-import cantools  # DBC parser
-from std_msgs.msg import Float32, Int32, Bool
-import subprocess
+import cantools  # DBC 파서
+from std_msgs.msg import Int32
 from threading import Thread
+import subprocess  # subprocess 모듈 추가
 
-# ---- 사용자 설정: 원하는 신호 -> 토픽 매핑 ----
-#   - key: (CAN_ID, "SignalName")  (CAN_ID는 16진수 정수)
-#   - value: {"topic": "...", "type": "float|int|bool"}
+# ---- 사용자 설정: ESP12 신호만 신호 -> 토픽 매핑 ----
 SIGNAL_MAP = {
-    (0x5C4, "CabinTemp"): {"topic": "/can/cabin_temp", "type": "float"},
-    (0x123, "VehicleSpeed"): {"topic": "/can/vehicle_speed", "type": "float"},
-    (0x321, "BrakePressed"): {"topic": "/can/brake_pressed", "type": "bool"},
+    "SAS_Angle": {"topic": "/angle", "type": "int"},
+    "LONG_ACCEL": {"topic": "/accel", "type": "int"},
 }
 
-DBC_PATH = "C_CAN.dbc"  # <- DBC 경로
-
-MSG_TYPE_MAP = {
-    "float": Float32,
-    "int": Int32,
-    "bool": Bool,
-}
+DBC_PATH = "hyundai_2015_ccan.dbc"  # DBC 파일 경로
 
 class CanDBCNode:
     def __init__(self):
-        rospy.init_node("can_dbc_to_topics", anonymous=True)
+        # ROS1 노드 초기화
+        rospy.init_node('can_dbc_to_topics')
 
-        # 1. CAN 인터페이스 설정 (SocketCAN 자동화)
+        # CAN 인터페이스 활성화
         self.configure_can_interface()
 
-        # 2. DBC 로드
+        # DBC 파일 로드
         self.db = cantools.database.load_file(DBC_PATH)
 
-        # 3. 퍼블리셔 생성 (신호별로)
-        self.publishers = {}
-        for key, cfg in SIGNAL_MAP.items():
-            msg_type = MSG_TYPE_MAP[cfg["type"]]
-            self.publishers[key] = rospy.Publisher(cfg["topic"], msg_type, queue_size=10)
-            rospy.loginfo(f"Publishing {key} -> {cfg['topic']} ({cfg['type']})")
+        # 퍼블리셔 딕셔너리 초기화
+        self._publishers = {}
 
-        # 4. CAN 버스 오픈 (SocketCAN)
+        # DBC 파일 내 신호 처리
+        for message in self.db.messages:
+            for signal in message.signals:
+                # SIGNAL_MAP에 해당하는 신호만 처리
+                if signal.name in SIGNAL_MAP:
+                    topic_name = f"/can/{signal.name}"
+                    msg_type = Int32  # ESP12 관련 신호는 int 타입으로 설정
+                    publisher = rospy.Publisher(topic_name, msg_type, queue_size=10)
+                    self._publishers[signal.name] = publisher
+                    rospy.loginfo(f"Publishing {signal.name} on {topic_name}")
+
+        # CAN 버스 오픈 (SocketCAN)
         self.bus = can.interface.Bus(channel='can0', bustype='socketcan')
 
-        # 5. 수신 스레드
+        # 수신 스레드
         self.running = True
         self.rx_thread = Thread(target=self.rx_loop, daemon=True)
         self.rx_thread.start()
@@ -53,82 +51,65 @@ class CanDBCNode:
         CAN 인터페이스를 자동으로 설정하는 함수
         """
         try:
-            rospy.loginfo("Configuring can0 interface with 50000 bitrate...")
-            # CAN 인터페이스 비트레이트 설정 (50 kbps)
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True)
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "50000", "restart-ms", "100"], check=True)
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "txqueuelen", "1024"], check=True)
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)
+            rospy.loginfo("Configuring can0 interface with 500000 bitrate...")
+            # CAN 인터페이스 비트레이트 설정 (500kbps 예시)
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True)  # can0 인터페이스 다운
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "500000", "restart-ms", "100"], check=True)  # 비트레이트 설정
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)  # can0 인터페이스 업
             rospy.loginfo("can0 interface configured successfully.")
         except subprocess.CalledProcessError as e:
             rospy.logerr(f"Error in configuring can0: {e}")
             exit(1)
 
     def rx_loop(self):
-        # 메시지 수신 및및 초기화
-        # 메시지 ID -> DBC 메시지 객체 캐시
         dbc_msg_cache = {}
         while self.running and not rospy.is_shutdown():
             msg = self.bus.recv(timeout=1.0)  # blocking
             if msg is None:
                 continue
-            # can id, 데이터 추
-            can_id = msg.arbitration_id
+
             data = bytes(msg.data)
 
-            # DBC 메시지 캐시(임시저장) 및 디코딩
             # 해당 ID 디코딩 가능한 DBC 메시지 찾기
-            if can_id not in dbc_msg_cache:
-                m = None
-                for m_candidate in self.db.messages:
-                    if m_candidate.frame_id == can_id:
-                        m = m_candidate
-                        break
-                dbc_msg_cache[can_id] = m
+            dbc_msg = None
+            for m_candidate in self.db.messages:
+                if m_candidate.frame_id == msg.arbitration_id:
+                    dbc_msg = m_candidate
+                    break
 
-            dbc_msg = dbc_msg_cache[can_id]
             if dbc_msg is None:
                 continue  # DBC에 없는 ID면 패스
-            # 메시지 디코딩
+
             try:
                 decoded = dbc_msg.decode(data, decode_choices=True)
             except Exception as e:
-                rospy.logwarn(f"Decode fail ID=0x{can_id:X}: {e}")
+                rospy.logwarn(f"Decode fail ID=0x{msg.arbitration_id:X}: {e}")
                 continue
 
-            # 우리가 원하는 신호만 골라서 퍼블리시
-            for (wanted_id, signal_name), cfg in SIGNAL_MAP.items():
-                if wanted_id != can_id:
-                    continue
-                if signal_name not in decoded:
-                    continue
-                val = decoded[signal_name]
-                # 타입 캐스팅
-                msg_type = cfg["type"]
-                if msg_type == "float":
-                    pub_msg = Float32()
-                    pub_msg.data = float(val)
-                elif msg_type == "int":
-                    pub_msg = Int32()
-                    pub_msg.data = int(val)
-                elif msg_type == "bool":
-                    pub_msg = Bool()
-                    # 수치/문자라도 truthy면 True 처리
-                    pub_msg.data = bool(val)
-                else:
-                    continue
-                self.publishers[(wanted_id, signal_name)].publish(pub_msg)
-    # 노드 종료 처리
-    def stop(self):
+            # SIGNAL_MAP에서 정의한 신호만 퍼블리시 (ESP12 관련 신호만 처리)
+            for signal_name, publisher in self._publishers.items():
+                if signal_name in decoded:
+                    val = decoded[signal_name]
+                    msg_type = SIGNAL_MAP[signal_name]["type"]
+                    if msg_type == "int":
+                        pub_msg = Int32()
+                        pub_msg.data = int(val)
+                        publisher.publish(pub_msg)
+
+    def destroy_node(self):
         self.running = False
 
-# 노드 실행
-if __name__ == "__main__":
+def main():
+    # 노드 생성 및 초기화
+    node = CanDBCNode()
+    
     try:
-        node = CanDBCNode()
-        rospy.spin()  # ROS1 노드 실행
+        rospy.spin()  # ROS1에서 메시지 처리 및 대기
     except KeyboardInterrupt:
         pass
-    finally:
-        node.stop()
-        rospy.loginfo("Shutting down CAN node.")
+    
+    node.destroy_node()
+    rospy.loginfo("Shutting down CAN node.")
+
+if __name__ == "__main__":
+    main()
