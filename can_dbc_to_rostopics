@@ -10,12 +10,12 @@ from threading import Thread
 #   - key: (CAN_ID, "SignalName")  (CAN_ID는 16진수 정수)
 #   - value: {"topic": "...", "type": "float|int|bool"}
 SIGNAL_MAP = {
-    (0x5C4, "CabinTemp"): {"topic": "/can/cabin_temp", "type": "int"},
+    (0x5C4, "CabinTemp"): {"topic": "/can/cabin_temp", "type": "float"},
     (0x123, "VehicleSpeed"): {"topic": "/can/vehicle_speed", "type": "float"},
     (0x321, "BrakePressed"): {"topic": "/can/brake_pressed", "type": "bool"},
 }
 
-DBC_PATH = "/path/to/your_file.dbc"  # <- 본인 DBC 경로
+DBC_PATH = "C_CAN.dbc"  # <- DBC 경로
 
 MSG_TYPE_MAP = {
     "float": Float32,
