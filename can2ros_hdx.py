@@ -1,9 +1,9 @@
 import rospy
 import can  # python-can
-import cantools  # DBC 파서
-from sensor_msgs.msg import NavSatFix  # NavSatFix 메시지 사용
+import cantools  # DBC parser
+from sensor_msgs.msg import NavSatFix
 from threading import Thread
-import subprocess  # subprocess 모듈 추가
+import subprocess  
 
 # ---dbc 참조하여 topic에 넣을 신호명 추가----
 SIGNAL_MAP = {
@@ -12,6 +12,7 @@ SIGNAL_MAP = {
     # "Altitude": {"topic": "/gps/altitude", "type": "float"},
 }
 
+# ---- 사용할 dbc파일명 입력 ----
 DBC_PATH = "hyundai_2015_ccan.dbc"  # DBC 파일 경로
 
 class CanDBCNode:
