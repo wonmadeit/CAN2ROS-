@@ -9,7 +9,7 @@ import subprocess
 SIGNAL_MAP = {
     "Latitude": {"topic": "/gps/latitude", "type": "float"},
     "Longitude": {"topic": "/gps/longitude", "type": "float"},
-    # "Altitude": {"topic": "/gps/altitude", "type": "float"},
+    "AK_GNSS_OrthometricHeight": {"topic": "/gps/altitude", "type": "float"},
 }
 
 # ---- 사용할 dbc파일명 입력 ----
