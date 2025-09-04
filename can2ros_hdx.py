@@ -13,7 +13,7 @@ SIGNAL_MAP = {
 }
 
 # ---- 사용할 dbc파일명 입력 ----
-DBC_PATH = "hyundai_2015_ccan.dbc"  # DBC 파일 경로
+DBC_PATH = "STA_CAN3_500kbps_250826.dbc"  # DBC 파일 경로
 
 class CanDBCNode:
     def __init__(self):
