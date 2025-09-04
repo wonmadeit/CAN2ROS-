@@ -10,7 +10,7 @@ import time  # 시간 계산을 위한 모듈
 SIGNAL_MAP = {
     "Latitude": {"topic": "/gps/fix", "type": "float"},
     "Longitude": {"topic": "/gps/fix", "type": "float"},
-    "Altitude": {"topic": "/gps/fix", "type": "float"},
+    "AK_GNSS_OrthometricHeight": {"topic": "/gps/fix", "type": "float"
 }
 
 DBC_PATH = "STA_CAN3_500kbps_250826.dbc"  # DBC 파일 경로
