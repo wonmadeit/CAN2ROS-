@@ -8,13 +8,14 @@ import time  # 시간 계산을 위한 모듈
 
 # ---- 사용자 설정: 신호명, dbc경로 입력 ----
 
+# dbc보고 로깅할 신호명 입력
 SIGNAL_MAP = {
     "Latitude": {"topic": "/gps/fix", "type": "float"},
     "Longitude": {"topic": "/gps/fix", "type": "float"},
     "AK_GNSS_OrthometricHeight": {"topic": "/gps/fix", "type": "float"
 }
-
-DBC_PATH = "STA_CAN3_500kbps_250826.dbc"  # DBC 파일 경로
+# DBC 파일 경로
+DBC_PATH = "STA_CAN3_500kbps_250826.dbc"  
 
 class CanDBCNode:
     def __init__(self):
