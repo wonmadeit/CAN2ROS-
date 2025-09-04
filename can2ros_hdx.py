@@ -6,7 +6,8 @@ from threading import Thread
 import subprocess  # subprocess 모듈 추가
 import time  # 시간 계산을 위한 모듈
 
-# ---- 사용자 설정: GPS 신호만 신호 -> 토픽 매핑 ----
+# ---- 사용자 설정: 신호명, dbc경로 입력 ----
+
 SIGNAL_MAP = {
     "Latitude": {"topic": "/gps/fix", "type": "float"},
     "Longitude": {"topic": "/gps/fix", "type": "float"},
