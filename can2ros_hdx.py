@@ -1,53 +1,58 @@
 import rospy
 import can  # python-can
-import cantools  # DBC parser
-from sensor_msgs.msg import NavSatFix
+import cantools  # DBC 파서
+from sensor_msgs.msg import NavSatFix  # NavSatFix 메시지 사용
 from threading import Thread
-import subprocess  
+import subprocess  # subprocess 모듈 추가
+import time  # 시간 계산을 위한 모듈
 
-# ---dbc 참조하여 topic에 넣을 신호명 추가----
+# ---- 사용자 설정: GPS 신호만 신호 -> 토픽 매핑 ----
 SIGNAL_MAP = {
-    "Latitude": {"topic": "/gps/latitude", "type": "float"},
-    "Longitude": {"topic": "/gps/longitude", "type": "float"},
-    "AK_GNSS_OrthometricHeight": {"topic": "/gps/altitude", "type": "float"},
+    "Latitude": {"topic": "/gps/fix", "type": "float"},
+    "Longitude": {"topic": "/gps/fix", "type": "float"},
+    "Altitude": {"topic": "/gps/fix", "type": "float"},
 }
 
-# ---- 사용할 dbc파일명 입력 ----
 DBC_PATH = "STA_CAN3_500kbps_250826.dbc"  # DBC 파일 경로
 
 class CanDBCNode:
     def __init__(self):
+        # ROS1 노드 초기화
+        rospy.init_node('can_dbc_to_gps_topics')
 
-        rospy.init_node('can_to_topics')
-        
+        # CAN 인터페이스 활성화
         self.configure_can_interface()
 
+        # DBC 파일 로드
         self.db = cantools.database.load_file(DBC_PATH)
 
-        # 퍼블리셔 초기화 (딕셔너리 형태로)
-        self.publisher_lat = rospy.Publisher("/gps/latitude", NavSatFix, queue_size=10)
-        self.publisher_lon = rospy.Publisher("/gps/longitude", NavSatFix, queue_size=10)
-        self.publisher_alt = rospy.Publisher("/gps/altitude", NavSatFix, queue_size=10)
+        # 퍼블리셔 초기화 (하나의 토픽에 발행)
+        self.publisher = rospy.Publisher("/gps/fix", NavSatFix, queue_size=10)
 
         # DBC 파일 내 신호 처리
         self._publishers = {}
 
-        # CAN 버스 오픈 (SocketCAN). 사용하는 버스에 따라 can channel 바꿔주기
+        # CAN 버스 오픈 (SocketCAN)
         self.bus = can.interface.Bus(channel='can0', bustype='socketcan')
+
+        # 기준 시간 설정 (현재 시간)
+        self.start_time = time.time()  # 초 단위로 시작 시간 기록
 
         # 수신 스레드
         self.running = True
         self.rx_thread = Thread(target=self.rx_loop, daemon=True)
         self.rx_thread.start()
 
-    # can 인터페이스 설정 자동 실행 함수
     def configure_can_interface(self):
+        """
+        CAN 인터페이스를 자동으로 설정하는 함수
+        """
         try:
             rospy.loginfo("Configuring can0 interface with 500000 bitrate...")
-            # CAN 인터페이스 비트레이트 설정. 사용할 can 버스의 설정값에 맞게 입력
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True) 
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "500000", "restart-ms", "100"], check=True)  # 비트레이트 설정. 보통 C&Pcan쪽은 500000
-            subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)  
+            # CAN 인터페이스 비트레이트 설정 (500kbps 예시)
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "down"], check=True)  # can0 인터페이스 다운
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "type", "can", "bitrate", "500000", "restart-ms", "100"], check=True)  # 비트레이트 설정
+            subprocess.run(["sudo", "ip", "link", "set", "can0", "up"], check=True)  # can0 인터페이스 업
             rospy.loginfo("can0 interface configured successfully.")
         except subprocess.CalledProcessError as e:
             rospy.logerr(f"Error in configuring can0: {e}")
@@ -86,19 +91,25 @@ class CanDBCNode:
                     gps_data[signal_name] = float(val)
 
             if gps_data:
-                # 각 신호에 대해 NavSatFix 메시지 발행
+                # NavSatFix 메시지 생성하여 발행
                 nav_msg = NavSatFix()
-                nav_msg.header.stamp = rospy.Time.now()  # 현재 시간으로 타임스탬프 설정(유닉스타임)
 
-                if "LATITUDE" in gps_data:
-                    nav_msg.latitude = gps_data["LATITUDE"]
-                    self.publisher_lat.publish(nav_msg)
-                if "LONGITUDE" in gps_data:
-                    nav_msg.longitude = gps_data["LONGITUDE"]
-                    self.publisher_lon.publish(nav_msg)
-                if "ALTITUDE" in gps_data:
-                    nav_msg.altitude = gps_data["ALTITUDE"]
-                    self.publisher_alt.publish(nav_msg)
+                # 현재 시간에서 시작 시간까지의 경과 시간 계산
+                elapsed_time = time.time() - self.start_time  # 초 단위로 경과 시간 계산
+
+                # 경과 시간을 초/나노초로 변환하여 타임스탬프 설정
+                #nav_msg.header.stamp = rospy.Time(secs=int(elapsed_time), nsecs=int((elapsed_time % 1) * 1e9))
+                nav_msg.header.stamp = rospy.Time.now()  # 현재 시간으로 타임스탬프 설정
+                # 신호 데이터를 NavSatFix의 필드에 매핑
+                if "Latitude" in gps_data:
+                    nav_msg.latitude = gps_data["Latitude"]
+                if "Longitude" in gps_data:
+                    nav_msg.longitude = gps_data["Longitude"]
+                if "Altitude" in gps_data:
+                    nav_msg.altitude = gps_data["Altitude"]
+
+                # NavSatFix 메시지 발행
+                self.publisher.publish(nav_msg)
 
     def destroy_node(self):
         self.running = False
